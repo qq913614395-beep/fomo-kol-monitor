@@ -52,7 +52,7 @@ sudo bash deploy/install-ubuntu.sh radar.example.com admin@example.com
 - 生成 Linux AES-256-GCM 主密钥和仪表盘 Basic Auth 密码。
 - 构建页面并安装 API/Web systemd 服务。
 - 配置 Nginx、Let's Encrypt HTTPS、SSE 和 HMAC ingest 限速。
-- 启用每日 SQLite 在线备份，不自动删除旧备份。
+- 启用每日 SQLite 在线备份，同时备份 root-only `api.env`（包含解密 JSON 密钥所需的 `MONITOR_MASTER_KEY`）和 Basic Auth 文件；不自动删除旧备份。
 - 执行服务器自检。
 
 安装完成后必须编辑：
@@ -87,7 +87,9 @@ sudo systemctl start fomo-monitor-backup.service
 sudo nginx -t
 ```
 
-备份位于 `/var/backups/fomo-kol-monitor/<UTC时间>/`，包含 SQLite 在线备份、JSON 密钥文件和 SHA-256。更新前必须先运行备份服务并记录目录。
+备份位于 `/var/backups/fomo-kol-monitor/<UTC时间>/`，包含 SQLite 在线备份、JSON 密钥文件、`api.env`、可选的 Basic Auth 文件和 SHA-256。目录及文件均为 root-only。更新前必须先运行备份服务并记录目录；异机恢复必须同时恢复 `api.env`，否则 AES-GCM JSON 无法解密。
+
+备份同时包含加密数据与其主密钥，必须再使用云盘加密、离线加密介质或受控备份服务保护，并定期执行异机恢复演练。定时器当前不自动清理旧备份，应按磁盘容量制定保留期。
 
 ## 安全边界
 

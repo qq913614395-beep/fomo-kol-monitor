@@ -91,6 +91,11 @@ export class Store {
   async verifyAddressCandidate(id, candidateId, patch) { const result = this.database.verifyAddressCandidate(id, candidateId, patch); this.refreshState(); return result; }
   async rejectAddressCandidate(id, candidateId) { const result = this.database.rejectAddressCandidate(id, candidateId); this.refreshState(); return result; }
   activeTargets() { return this.database.activeTargets(); }
+  subscriptionFence(personId, targetId) {
+    return this.database.db.prepare(`SELECT notification_fence FROM monitor_subscriptions
+      WHERE person_id=? AND target_id=? AND desired_state='active' AND active_to IS NULL
+      ORDER BY generation DESC LIMIT 1`).get(personId, targetId)?.notification_fence || "";
+  }
 
   async addEvent(event) { const result = await this.addOrMergeEvent(event); return result.isNew ? result.record : null; }
   async addOrMergeEvent(event) {

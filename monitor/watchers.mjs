@@ -152,11 +152,16 @@ export class Watchers {
     let before;
     const fresh = [];
     let newest = "";
+    let cursorFound = false;
+    let reachedHistoryEnd = false;
     for (let page = 0; page < this.config.solanaMaxPages; page += 1) {
       const options = { limit: this.config.solanaPageSize };
       if (before) options.before = before;
       const signatures = await rpc(this.config.solanaRpcHttp, "getSignaturesForAddress", [address, options]);
-      if (!signatures?.length) break;
+      if (!signatures?.length) {
+        reachedHistoryEnd = true;
+        break;
+      }
       newest ||= signatures[0].signature;
       if (!cursor && !this.config.backfillOnFirstRun) {
         this.store.state.cursors.solana[address] = newest;
@@ -166,12 +171,22 @@ export class Watchers {
       for (const item of signatures) {
         if (item.signature === cursor) {
           found = true;
+          cursorFound = true;
           break;
         }
         if (!item.err) fresh.push(item);
       }
-      if (found || signatures.length < this.config.solanaPageSize) break;
+      if (found || signatures.length < this.config.solanaPageSize) {
+        if (!found) reachedHistoryEnd = true;
+        break;
+      }
       before = signatures.at(-1)?.signature;
+    }
+    // The page cap is a safety limit, not permission to skip the unscanned
+    // part of the signature stream.  Keep the old cursor so the next poll can
+    // retry with a larger window (or after operator intervention).
+    if (cursor && !cursorFound && !reachedHistoryEnd) {
+      throw new Error(`SOLANA_CURSOR_GAP: did not reach ${cursor} within ${this.config.solanaMaxPages} pages for ${address}`);
     }
     for (const item of fresh.reverse()) {
       const transaction = await rpc(this.config.solanaRpcHttp, "getTransaction", [item.signature, {
@@ -230,14 +245,6 @@ export class Watchers {
         reorgDetected = true;
       }
     }
-    if (latest - BigInt(existing) > BigInt(this.config.evmMaxCatchupBlocks)) {
-      existing = (latest > 2n ? latest - 2n : 0n).toString();
-      const catchupBlock = await chainRpc(chain, "eth_getBlockByNumber", [hexBlock(BigInt(existing)), false]);
-      if (!catchupBlock?.hash) throw new Error(`block unavailable while resetting ${chain.key} catch-up cursor at ${existing}`);
-      previousHash = catchupBlock.hash;
-      this.store.state.cursors.evm[chain.key] = { blockNumber: existing, blockHash: previousHash };
-      await this.store.save();
-    }
     const from = BigInt(existing) + 1n;
     if (from > latest) return { monitored: people.length, block: latest.toString(), eventsFound: 0 };
     const configuredRange = BigInt(this.config.evmMaxBlockRange);
@@ -277,21 +284,18 @@ export class Watchers {
     }
     // Some public RPCs reject an address array even for a single block. Query
     // each supported EntryPoint independently, then merge the ordered logs.
-    let logGroups = [];
-    let entrypointError = "";
-    try {
-      logGroups = await Promise.all(this.config.entryPointAddresses.map((entryPoint) => getLogsAdaptive(
-        (nextFilter) => chainRpc(chain, "eth_getLogs", [nextFilter]),
-        {
-          address: entryPoint,
-          topics: [USER_OPERATION_EVENT, null, topics.length === 1 ? topics[0] : topics],
-        },
-        from,
-        to,
-      )));
-    } catch (error) {
-      entrypointError = error.message || String(error);
-    }
+    // A failed EntryPoint scan makes the whole range incomplete. Direct
+    // transactions emitted above are idempotent and can safely be replayed;
+    // advancing here would permanently skip UserOperations in this range.
+    const logGroups = await Promise.all(this.config.entryPointAddresses.map((entryPoint) => getLogsAdaptive(
+      (nextFilter) => chainRpc(chain, "eth_getLogs", [nextFilter]),
+      {
+        address: entryPoint,
+        topics: [USER_OPERATION_EVENT, null, topics.length === 1 ? topics[0] : topics],
+      },
+      from,
+      to,
+    )));
     const logs = logGroups.flat().sort((a, b) => {
       const blockDelta = Number.parseInt(a.blockNumber || "0x0", 16) - Number.parseInt(b.blockNumber || "0x0", 16);
       return blockDelta || Number.parseInt(a.logIndex || "0x0", 16) - Number.parseInt(b.logIndex || "0x0", 16);
@@ -333,7 +337,7 @@ export class Watchers {
       blockLag: Number(latest - to),
       eventsFound: directEvents + (logs?.length || 0),
       directEvents,
-      entrypointError,
+      entrypointError: "",
       reorgDetected,
       lastCheckedAt: new Date().toISOString(),
     };

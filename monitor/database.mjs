@@ -778,6 +778,15 @@ export class MonitorDatabase {
     }));
   }
 
+  listDeliverableNotifications({ excludeChannel = "browser", limit = 10 } = {}) {
+    const current = now();
+    return this.db.prepare(`SELECT * FROM notification_outbox
+      WHERE channel!=? AND (
+        (status IN ('pending','retry_wait') AND (next_retry_at IS NULL OR next_retry_at<=?))
+        OR (status='delivering' AND lease_until<?)
+      ) ORDER BY created_at LIMIT ?`).all(excludeChannel, current, current, limit);
+  }
+
   claimNotification(id, owner, leaseMs = 30000) {
     return this.transaction(() => {
       const row = this.db.prepare("SELECT * FROM notification_outbox WHERE id=?").get(id);

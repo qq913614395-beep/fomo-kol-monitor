@@ -16,7 +16,7 @@ import {
 } from "../monitor/core.mjs";
 import { counterpartFromRequests } from "../monitor/resolver.mjs";
 import { metricsFromPair, pickDexPair, selectEventToken } from "../monitor/enricher.mjs";
-import { GmgnWatcher, aggregatePortfolioActivities, parseGmgnOutput, portfolioActivityFingerprint, reconcileTradeSets } from "../monitor/gmgn.mjs";
+import { GmgnWatcher, aggregatePortfolioActivities, gmgnChildEnvironment, parseGmgnOutput, portfolioActivityFingerprint, reconcileTradeSets } from "../monitor/gmgn.mjs";
 import { deriveWebSocketUrl } from "../monitor/realtime.mjs";
 import { Store } from "../monitor/store.mjs";
 import { getLogsAdaptive, mapConcurrent } from "../monitor/watchers.mjs";
@@ -261,6 +261,72 @@ test("splits EVM log ranges when a provider rejects a large query", async () => 
   }, { address: "0xentry" }, 10n, 13n);
   assert.equal(logs.length, 4);
   assert.ok(calls > 4);
+});
+
+test("an incomplete GMGN window keeps its watermark and resumes pagination", async () => {
+  const pages = [];
+  const emitted = [];
+  const person = { id: "p1", name: "large-wallet", enabled: true, solanaAddress: SOL };
+  const store = {
+    state: { cursors: { gmgn: { "target:sol": { watermarkTimestamp: 100, seen: [] } } }, events: [] },
+    activeTargets: () => [{ id: "target:sol", chain: "solana", address: SOL, people: [person] }],
+    save: async () => {},
+  };
+  const watcher = new GmgnWatcher({
+    config: { gmgnCliPath: "gmgn-cli", gmgnChains: ["sol"], gmgnLimit: 1, gmgnMaxPages: 1, gmgnLookbackSeconds: 60, gmgnConcurrency: 1, gmgnRequestsPerSecond: 8, gmgnCommandTimeoutMs: 1000, gmgnPollIntervalMs: 5000, subscriptionRefreshMs: 15000 },
+    store,
+    emit: async (event) => { emitted.push(event); return event; },
+    report: () => {},
+    runner: async (_command, args) => {
+      const cursorIndex = args.indexOf("--cursor");
+      const cursor = cursorIndex >= 0 ? args[cursorIndex + 1] : "";
+      pages.push(cursor);
+      return JSON.stringify({ activities: [{ wallet: SOL, tx_hash: cursor ? "sig-old" : "sig-new", timestamp: cursor ? 110 : 200, event_type: "buy", token: { address: "mint", symbol: "MEME" }, token_amount: "1", quote_amount: "1", cost_usd: "1" }], next: cursor ? "" : "page-2" });
+    },
+  });
+  watcher.stopped = false;
+  watcher.targets.set("target:sol", { id: "target:sol", chain: "sol", wallet: SOL, person, running: false, failures: 0, timer: null });
+  await watcher.pollTarget(watcher.targets.get("target:sol"));
+  assert.equal(store.state.cursors.gmgn["target:sol"].watermarkTimestamp, 100);
+  assert.equal(store.state.cursors.gmgn["target:sol"].continuationCursor, "page-2");
+  await watcher.pollTarget(watcher.targets.get("target:sol"));
+  assert.deepEqual(pages, ["", "page-2"]);
+  assert.equal(store.state.cursors.gmgn["target:sol"].watermarkTimestamp, 200);
+  assert.equal(store.state.cursors.gmgn["target:sol"].continuationCursor, undefined);
+  assert.equal(emitted.length, 2);
+});
+
+test("GMGN child processes receive only an explicit non-secret environment", () => {
+  const environment = gmgnChildEnvironment({
+    PATH: "bin", APPDATA: "app", GMGN_API_KEY: "gmgn", MONITOR_MASTER_KEY: "master",
+    TELEGRAM_BOT_TOKEN: "telegram", WEBHOOK_URL: "https://secret.test", BNB_RPC_HTTP: "https://rpc-key.test",
+  });
+  assert.deepEqual(environment, { PATH: "bin", APPDATA: "app", GMGN_API_KEY: "gmgn" });
+});
+
+test("a new target only suppresses activity before its notification fence", async () => {
+  const emitted = [];
+  const person = { id: "p-fence", name: "fenced-wallet", enabled: true, solanaAddress: SOL };
+  const store = {
+    state: { cursors: { gmgn: {} }, events: [] },
+    activeTargets: () => [], save: async () => {},
+    subscriptionFence: () => new Date(150 * 1000).toISOString(),
+  };
+  const watcher = new GmgnWatcher({
+    config: { gmgnCliPath: "gmgn-cli", gmgnChains: ["sol"], gmgnLimit: 10, gmgnMaxPages: 1, gmgnLookbackSeconds: 60, gmgnConcurrency: 1, gmgnRequestsPerSecond: 8, gmgnCommandTimeoutMs: 1000, gmgnPollIntervalMs: 5000, subscriptionRefreshMs: 15000 },
+    store, emit: async (event) => { emitted.push(event); return event; }, report: () => {},
+    runner: async () => JSON.stringify({ activities: [
+      { wallet: SOL, tx_hash: "sig-before", timestamp: 140, event_type: "buy", token: { address: "mint-old", symbol: "OLD" }, token_amount: "1", quote_amount: "1", cost_usd: "1" },
+      { wallet: SOL, tx_hash: "sig-after", timestamp: 160, event_type: "buy", token: { address: "mint-new", symbol: "NEW" }, token_amount: "1", quote_amount: "1", cost_usd: "1" },
+    ], next: "" }),
+  });
+  watcher.stopped = false;
+  const target = { id: "target:fence", chain: "sol", wallet: SOL, person, running: false, failures: 0, timer: null };
+  watcher.targets.set(target.id, target);
+  await watcher.pollTarget(target);
+  assert.equal(emitted.find((event) => event.txHash === "sig-before").historical, true);
+  assert.equal(emitted.find((event) => event.txHash === "sig-after").historical, false);
+  assert.equal(emitted.find((event) => event.txHash === "sig-after").notificationEligible, true);
 });
 
 test("merges GMGN enrichment with an existing chain event by transaction", async () => {

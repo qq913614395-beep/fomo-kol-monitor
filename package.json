@@ -11,7 +11,7 @@
     "dev:all": "node scripts/run-supported.mjs devall",
     "build": "node scripts/run-supported.mjs build",
     "start": "node scripts/run-supported.mjs start",
-    "test": "node scripts/run-supported.mjs test tests/monitor.test.mjs tests/database.test.mjs tests/golden-fixtures.test.mjs tests/fomo-web.test.mjs tests/server-integration.test.mjs",
+    "test": "node scripts/run-supported.mjs test tests/monitor.test.mjs tests/database.test.mjs tests/golden-fixtures.test.mjs tests/fomo-web.test.mjs tests/server-integration.test.mjs tests/backend-resilience.test.mjs tests/instance-lock.test.mjs",
     "test:rendered": "node scripts/run-supported.mjs test tests/rendered-html.test.mjs",
     "test:all": "npm run typecheck && npm run lint && npm run test && npm run build && npm run test:rendered",
     "typecheck": "node scripts/run-supported.mjs typecheck --noEmit",
@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
-    "next": "16.2.6",
+    "next": "16.3.0",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },
@@ -35,7 +35,7 @@
     "@vitejs/plugin-rsc": "0.5.26",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.2.6",
+    "eslint-config-next": "16.3.0",
     "react-server-dom-webpack": "19.2.6",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",

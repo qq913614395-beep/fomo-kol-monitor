@@ -7,6 +7,8 @@ User=root
 Group=root
 Environment=DATA_DIR=/var/lib/fomo-kol-monitor
 Environment=BACKUP_ROOT=/var/backups/fomo-kol-monitor
+Environment=CONFIG_FILE=/etc/fomo-kol-monitor/api.env
+Environment=BASIC_AUTH_FILE=/etc/nginx/fomo-monitor.htpasswd
 ExecStart=/opt/fomo-kol-monitor/deploy/backup.sh
 UMask=0077
 NoNewPrivileges=true
@@ -15,3 +17,5 @@ ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/backups/fomo-kol-monitor
 ReadOnlyPaths=/var/lib/fomo-kol-monitor
+ReadOnlyPaths=/etc/fomo-kol-monitor/api.env
+ReadOnlyPaths=-/etc/nginx/fomo-monitor.htpasswd

@@ -15,7 +15,7 @@
 ## 获得确认后的切换顺序
 
 1. 创建带时间戳的独立备份目录。
-2. 复制 `state.json`、现有 `.env`、启动脚本和已有数据库（若有）；逐文件记录 SHA-256。
+2. 复制 `state.json`、现有 `.env`/`api.env`、启动脚本和已有数据库（若有）；逐文件记录 SHA-256。Linux 的 `api.env` 包含解密持久 JSON 密钥所必需的 `MONITOR_MASTER_KEY`，缺少它的备份不可视为可恢复。
 3. 停止旧 3001/8788，确认端口释放。
 4. 从真实 `state.json` 的副本创建全新 SQLite；运行 quick_check、人员/绑定/历史成交/Outbox 零补发检查。
 5. 使用正式数据目录启动新 API，再启动页面。
@@ -35,3 +35,9 @@
 3. 恢复原 `.env` 与原启动方式；`state.json` 使用备份副本校验后恢复。
 4. 启动旧 8788/3001 并确认健康。
 
+## Linux 备份恢复验证
+
+1. 以 root 身份运行 `systemctl start fomo-monitor-backup.service`，确认备份中至少有 `monitor.sqlite3`、`api.env` 与 `SHA256SUMS`。
+2. 在隔离主机上执行 `sha256sum -c SHA256SUMS`，将数据库、JSON 和 `api.env` 恢复到对应目录并保持 root-only 权限。
+3. 使用恢复的环境文件运行 `server-doctor.mjs`，确认 SQLite quick check 与主密钥长度通过，再启动服务。
+4. 验证通知配置可解密、历史数据不补发、目标与游标数量一致。备份包含主密钥，外部副本必须额外加密和限制访问。

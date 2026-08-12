@@ -210,12 +210,23 @@ export function aggregatePortfolioActivities(activities, person, gmgnChain, opti
   }).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 }
 
+export function gmgnChildEnvironment(source = process.env) {
+  const allowed = [
+    "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP",
+    "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "LANG", "LC_ALL",
+    "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "GMGN_API_KEY", "GMGN_BASE_URL",
+  ];
+  return Object.fromEntries(allowed.filter((key) => source[key] != null).map((key) => [key, source[key]]));
+}
+
 function runCommand(command, args, timeoutMs, maxOutputBytes = 8_000_000) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       windowsHide: true,
       shell: false,
-      env: process.env,
+      // The CLI is a separate third-party process. It must never inherit the
+      // monitor master key, RPC credentials, or notification channel secrets.
+      env: gmgnChildEnvironment(),
     });
     let stdout = "";
     let stderr = "";
@@ -369,7 +380,8 @@ export class GmgnWatcher {
 
   effectiveIntervalMs() {
     const targetCount = Math.max(1, this.targets.size);
-    return Math.max(this.config.gmgnPollIntervalMs, Math.ceil(targetCount / (this.config.gmgnRequestsPerSecond || 8)) * 1000);
+    const pagePressure = Math.max(1, Math.min(this.config.gmgnMaxPages || 1, 2));
+    return Math.max(this.config.gmgnPollIntervalMs, Math.ceil((targetCount * pagePressure) / (this.config.gmgnRequestsPerSecond || 8)) * 1000);
   }
 
   schedule(target, delay = this.effectiveIntervalMs()) {
@@ -396,7 +408,7 @@ export class GmgnWatcher {
 
   async fetchWindow(target, cursorState) {
     const rows = [];
-    let cursor = "";
+    let cursor = String(cursorState?.continuationCursor || "");
     let complete = false;
     const watermark = Number(cursorState?.watermarkTimestamp || 0);
     for (let page = 0; page < this.config.gmgnMaxPages; page += 1) {
@@ -432,19 +444,49 @@ export class GmgnWatcher {
           const timestamp = numeric(item.timestamp);
           return timestamp >= watermark - this.config.gmgnLookbackSeconds && !known.has(portfolioActivityFingerprint(item));
         });
-      const historical = firstRun || forceHistorical;
-      const events = aggregatePortfolioActivities(fresh, target.person, target.chain, { historical, observedAt });
+      const baselinePending = firstRun || Boolean(cursorState?.baselinePending);
+      const baselineFence = String(cursorState?.baselineFence || (firstRun && typeof this.store.subscriptionFence === "function"
+        ? this.store.subscriptionFence(target.person.id, target.id)
+        : ""));
+      const fenceMs = Date.parse(baselineFence);
+      let events;
+      if (forceHistorical || (baselinePending && !Number.isFinite(fenceMs))) {
+        events = aggregatePortfolioActivities(fresh, target.person, target.chain, { historical: true, observedAt });
+      } else if (baselinePending) {
+        const beforeFence = fresh.filter((item) => new Date(isoTimestamp(item.timestamp)).getTime() < fenceMs);
+        const afterFence = fresh.filter((item) => new Date(isoTimestamp(item.timestamp)).getTime() >= fenceMs);
+        events = [
+          ...aggregatePortfolioActivities(beforeFence, target.person, target.chain, { historical: true, observedAt }),
+          ...aggregatePortfolioActivities(afterFence, target.person, target.chain, { historical: false, observedAt }),
+        ].sort((left, right) => new Date(left.timestamp) - new Date(right.timestamp));
+      } else {
+        events = aggregatePortfolioActivities(fresh, target.person, target.chain, { historical: false, observedAt });
+      }
       let added = 0;
       for (const event of events) {
         const stored = await this.emit(event, target.person);
         if (stored) added += 1;
       }
       const newestTimestamp = activities.reduce((max, item) => Math.max(max, numeric(item.timestamp)), watermark);
+      const pendingNewestTimestamp = Math.max(Number(cursorState?.pendingNewestTimestamp || 0), newestTimestamp);
       const seen = [...new Set([
         ...activities.map(portfolioActivityFingerprint),
         ...(Array.isArray(cursorState?.seen) ? cursorState.seen : []),
       ])].slice(0, 1000);
-      this.store.state.cursors.gmgn[target.id] = { watermarkTimestamp: newestTimestamp, seen, updatedAt: observedAt };
+      // Never advance the authoritative watermark until the paginated window
+      // is complete. Persist a continuation so a large wallet cannot repeat
+      // the first N pages forever and silently strand older activity.
+      this.store.state.cursors.gmgn[target.id] = window.complete
+        ? { watermarkTimestamp: pendingNewestTimestamp, seen, updatedAt: observedAt }
+        : {
+            watermarkTimestamp: watermark,
+            pendingNewestTimestamp,
+            continuationCursor: window.nextCursor,
+            baselinePending,
+            baselineFence,
+            seen,
+            updatedAt: observedAt,
+          };
       await this.store.save();
       if (events.length) target.lastTargetEventAt = events.at(-1)?.timestamp || observedAt;
       else if (activities.length) target.lastTargetEventAt = isoTimestamp(activities[0].timestamp);

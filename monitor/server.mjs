@@ -1,6 +1,6 @@
 import http from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
-import { closeSync, mkdirSync, openSync, unlinkSync } from "node:fs";
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -92,14 +92,89 @@ const config = {
 };
 
 const lockPath = path.resolve(projectRoot, process.env.INSTANCE_LOCK_PATH || `${config.databaseFile}.lock`);
-let lockHandle;
-try {
-  mkdirSync(path.dirname(lockPath), { recursive: true });
-  lockHandle = openSync(lockPath, "wx");
-} catch (error) {
-  if (error.code === "EEXIST") throw new Error(`INSTANCE_ALREADY_RUNNING: ${lockPath}`);
-  throw error;
+const lockOwner = randomUUID();
+const lockRecord = { pid: process.pid, owner: lockOwner, startedAt: stamp(), databaseFile: config.databaseFile };
+
+function processIsAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === "ESRCH") return false;
+    // EPERM means the process exists but belongs to a different account. Any
+    // unknown result is also treated as live so an active lock is never removed.
+    return true;
+  }
 }
+
+function recoverStaleLock() {
+  let existing;
+  let malformed = false;
+  try {
+    existing = JSON.parse(readFileSync(lockPath, "utf8"));
+    malformed = !Number.isSafeInteger(Number(existing?.pid)) || Number(existing.pid) <= 0 || typeof existing?.owner !== "string" || !existing.owner;
+  } catch (error) {
+    if (error.code === "ENOENT") return true;
+    malformed = true;
+  }
+  if (malformed) {
+    // A newly-created lock has a very small open/write window. Do not recover
+    // malformed or empty content until it has remained unchanged for 30s.
+    let ageMs = 0;
+    try { ageMs = Date.now() - statSync(lockPath).mtimeMs; } catch (statError) { return statError.code === "ENOENT"; }
+    if (ageMs < 30_000) throw new Error(`INSTANCE_LOCK_INITIALIZING: ${lockPath}`);
+    existing = null;
+  }
+  if (existing && processIsAlive(Number(existing.pid)) !== false) {
+    throw new Error(`INSTANCE_ALREADY_RUNNING: pid=${existing.pid} lock=${lockPath}`);
+  }
+
+  // Rename is the recovery claim: if another starter won the race, this fails
+  // and acquisition is retried without ever unlinking the new owner's lock.
+  const stalePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
+  try {
+    renameSync(lockPath, stalePath);
+  } catch (error) {
+    if (error.code === "ENOENT") return true;
+    throw error;
+  }
+  try { unlinkSync(stalePath); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  return true;
+}
+
+function acquireInstanceLock() {
+  mkdirSync(path.dirname(lockPath), { recursive: true });
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      const handle = openSync(lockPath, "wx", 0o600);
+      try {
+        writeSync(handle, `${JSON.stringify(lockRecord)}\n`, null, "utf8");
+        fsyncSync(handle);
+        return handle;
+      } catch (error) {
+        closeSync(handle);
+        try { unlinkSync(lockPath); } catch {}
+        throw error;
+      }
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      recoverStaleLock();
+    }
+  }
+  throw new Error(`INSTANCE_LOCK_ACQUIRE_FAILED: ${lockPath}`);
+}
+
+function releaseInstanceLock(handle) {
+  try { closeSync(handle); } catch {}
+  try {
+    const existing = JSON.parse(readFileSync(lockPath, "utf8"));
+    if (existing.owner === lockOwner && Number(existing.pid) === process.pid) unlinkSync(lockPath);
+  } catch (error) {
+    if (error.code !== "ENOENT") console.error(`INSTANCE_LOCK_RELEASE_FAILED: ${error.message}`);
+  }
+}
+const lockHandle = acquireInstanceLock();
 
 const store = new Store(config.dataDir, { databaseFile: config.databaseFile });
 await store.load();
@@ -293,7 +368,7 @@ async function reconcileNow() {
 }
 
 async function processOutbox() {
-  const rows = database.db.prepare("SELECT * FROM notification_outbox WHERE channel!='browser' AND status IN ('pending','retry_wait') AND (next_retry_at IS NULL OR next_retry_at<=?) ORDER BY created_at LIMIT 10").all(stamp());
+  const rows = database.listDeliverableNotifications({ excludeChannel: "browser", limit: 10 });
   for (const row of rows) {
     const claimed = database.claimNotification(row.id, `worker:${process.pid}`);
     if (!claimed) continue;
@@ -590,7 +665,7 @@ async function shutdown() {
   sseClients.clear();
   server.close(() => {
     store.close();
-    try { closeSync(lockHandle); unlinkSync(lockPath); } catch {}
+    releaseInstanceLock(lockHandle);
     process.exit(0);
   });
   server.closeIdleConnections?.();

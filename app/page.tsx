@@ -22,6 +22,23 @@ type Status = { readiness?: string; storage?: string; integrity?: string; active
 type Reconciliation = { id: string; personId?: string; targetId?: string; chain: string; wallet: string; status: string; sourceComplete: boolean; sourceCount: number; localCount: number; matched: number; missing: number; extra: number; mismatched: number; checkedAt: string; items?: Array<Record<string, unknown>> };
 type Operation = { id: string; kind: string; status: string; progress: number; result?: unknown; errorCode?: string; errorMessage?: string };
 
+const operationStorageKey = "fomo-operation-ids";
+function readOperationIds() {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(operationStorageKey) || "[]");
+    if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new Error("invalid operation cache");
+    return value as string[];
+  } catch {
+    try { localStorage.removeItem(operationStorageKey); } catch { /* Storage may be unavailable. */ }
+    return [];
+  }
+}
+
+function writeOperationIds(ids: string[]) {
+  try { localStorage.setItem(operationStorageKey, JSON.stringify(ids)); }
+  catch { /* Operation tracking must not turn a successful API mutation into a UI failure. */ }
+}
+
 function short(value = "", left = 7, right = 5) { return value.length > left + right + 2 ? `${value.slice(0, left)}…${value.slice(-right)}` : value || "—"; }
 function formatMoney(value?: string) { const number = Number(value || 0); return Number.isFinite(number) ? number.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : value || "0.00"; }
 function elapsed(value?: string) { if (!value) return "—"; const ms = Math.max(0, Date.now() - new Date(value).getTime()); if (ms < 60000) return `${Math.round(ms / 1000)}秒`; if (ms < 3600000) return `${Math.round(ms / 60000)}分`; if (ms < 86400000) return `${Math.round(ms / 3600000)}小时`; return `${Math.round(ms / 86400000)}天`; }
@@ -43,7 +60,7 @@ export default function Home() {
   const [streamConnected, setStreamConnected] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const [mode, setMode] = useState<"add" | "import" | "binding">("add");
-  const [busy, setBusy] = useState("");
+  const [busy, setBusy] = useState<Set<string>>(() => new Set());
   const [message, setMessage] = useState("");
   const [confirmingRemove, setConfirmingRemove] = useState("");
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
@@ -60,10 +77,14 @@ export default function Home() {
   const notifiedRef = useRef<Set<string>>(new Set());
   const refreshTimer = useRef<number | null>(null);
   const eventCursorRef = useRef(0);
+  const refreshSequenceRef = useRef(0);
+  const peopleRef = useRef<Person[]>([]);
+  const busyRef = useRef<Set<string>>(new Set());
+  const isBusy = useCallback((key: string) => busy.has(key), [busy]);
 
   const request = useCallback(async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
     const headers = new Headers(init.headers);
-    headers.set("content-type", "application/json");
+    if (init.body != null && !headers.has("content-type")) headers.set("content-type", "application/json");
     if (init.method && init.method !== "GET") headers.set("x-local-session", tokenRef.current);
     const response = await fetch(`${API}${path}`, { ...init, headers, cache: "no-store" });
     const payload = await response.json().catch(() => ({}));
@@ -72,6 +93,7 @@ export default function Home() {
   }, []);
 
   const refresh = useCallback(async () => {
+    const sequence = ++refreshSequenceRef.current;
     try {
       const currentStatus = await request<Status>("/api/v1/status");
       tokenRef.current = currentStatus.localSessionToken || tokenRef.current;
@@ -83,14 +105,18 @@ export default function Home() {
         request<{ items: Trade[] }>("/api/v1/trades?view=pending&limit=200"),
         request<{ items: Reconciliation[] }>("/api/v1/reconciliations?limit=200"),
       ]);
+      if (sequence !== refreshSequenceRef.current) return;
+      peopleRef.current = peopleResult.items;
       setStatus(currentStatus); setPeople(peopleResult.items); setTrades({ live: liveResult.items, history: historyResult.items, pending: pendingResult.items }); setReconciliations(auditResult.items);
-    } catch (error) { setMessage(`刷新失败：${error instanceof Error ? error.message : String(error)}`); }
+    } catch (error) {
+      if (sequence === refreshSequenceRef.current) setMessage(`刷新失败：${error instanceof Error ? error.message : String(error)}`);
+    }
   }, [request]);
 
   const trackOperation = useCallback((operation: Operation) => {
     setOperations((current) => [operation, ...current.filter((item) => item.id !== operation.id)].slice(0, 8));
-    const stored = JSON.parse(localStorage.getItem("fomo-operation-ids") || "[]") as string[];
-    localStorage.setItem("fomo-operation-ids", JSON.stringify([operation.id, ...stored.filter((id) => id !== operation.id)].slice(0, 12)));
+    const stored = readOperationIds();
+    writeOperationIds([operation.id, ...stored.filter((id) => id !== operation.id)].slice(0, 12));
   }, []);
 
   const processBrowserIntents = useCallback(async () => {
@@ -102,13 +128,13 @@ export default function Home() {
       if (notifiedRef.current.has(intent.id)) continue;
       try {
         await request(`/api/v1/notification-intents/${intent.id}:claim`, { method: "POST", body: JSON.stringify({ owner }) });
-        const trade = intent.trade; const person = people.find((item) => item.id === trade.personId || trade.kolIds?.includes(item.id));
+        const trade = intent.trade; const person = peopleRef.current.find((item) => item.id === trade.personId || trade.kolIds?.includes(item.id));
         new Notification(`${person?.name || person?.handle || "FOMO KOL"} · ${trade.side === "buy" ? "买入" : "卖出"} ${trade.token?.symbol || "Token"}`, { body: `${chainNames[trade.chain] || trade.chain} · $${formatMoney(trade.valueUsd)}`, tag: intent.id });
         notifiedRef.current.add(intent.id);
         await request(`/api/v1/notification-intents/${intent.id}:ack`, { method: "POST", body: JSON.stringify({ status: "delivered", owner }) });
       } catch { /* another tab may have claimed it */ }
     }
-  }, [people, request]);
+  }, [request]);
 
   useEffect(() => {
     const kickoff = window.setTimeout(() => void refresh(), 0);
@@ -122,7 +148,9 @@ export default function Home() {
       stream.addEventListener("ready", () => setStreamConnected(true));
       stream.addEventListener("monitor-event", (raw) => {
         setStreamConnected(true);
-        const envelope = JSON.parse((raw as MessageEvent).data);
+        let envelope: { sequence?: number; type?: string };
+        try { envelope = JSON.parse((raw as MessageEvent).data); }
+        catch { setMessage("收到一条损坏的实时事件，已忽略并继续监听。"); return; }
         eventCursorRef.current = Math.max(eventCursorRef.current, Number(envelope.sequence || 0));
         if (envelope.type === "reset.required") void refresh();
         else {
@@ -143,7 +171,7 @@ export default function Home() {
 
   useEffect(() => {
     const pollOperations = async () => {
-      const ids = JSON.parse(localStorage.getItem("fomo-operation-ids") || "[]") as string[];
+      const ids = readOperationIds();
       if (!ids.length || !tokenRef.current) return;
       const results = await Promise.all(ids.slice(0, 8).map((id) => request<Operation>(`/api/v1/operations/${id}`).catch(() => null)));
       const valid = results.filter((item): item is Operation => Boolean(item));
@@ -152,6 +180,24 @@ export default function Home() {
     const timer = window.setInterval(() => void pollOperations(), 1000);
     return () => window.clearInterval(timer);
   }, [request]);
+
+  useEffect(() => {
+    if (!confirmingRemove) return;
+    const timer = window.setTimeout(() => setConfirmingRemove(""), 10000);
+    return () => window.clearTimeout(timer);
+  }, [confirmingRemove]);
+
+  useEffect(() => {
+    if (!manageOpen && !capabilitiesOpen && !selectedTrade) return;
+    const closeTopLayer = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (selectedTrade) setSelectedTrade(null);
+      else if (capabilitiesOpen) setCapabilitiesOpen(false);
+      else setManageOpen(false);
+    };
+    window.addEventListener("keydown", closeTopLayer);
+    return () => window.removeEventListener("keydown", closeTopLayer);
+  }, [capabilitiesOpen, manageOpen, selectedTrade]);
 
   const filtered = useMemo(() => {
     const source = view === "history" ? trades.history : view === "pending" ? trades.pending : trades.live;
@@ -171,8 +217,14 @@ export default function Home() {
   const selectedWallet = selectedTrade?.wallet || selectedPerson?.bindings.find((binding) => binding.chain === selectedTrade?.chain || (selectedTrade?.chain === "bnb" && binding.chain === "bsc"))?.address;
 
   async function withBusy(key: string, task: () => Promise<void>) {
-    setBusy(key); setMessage("");
-    try { await task(); await refresh(); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } finally { setBusy(""); }
+    if (busyRef.current.has(key)) return;
+    busyRef.current.add(key);
+    setBusy((current) => new Set(current).add(key)); setMessage("");
+    try { await task(); await refresh(); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+    finally {
+      busyRef.current.delete(key);
+      setBusy((current) => { const next = new Set(current); next.delete(key); return next; });
+    }
   }
   async function addPerson(event: FormEvent) {
     event.preventDefault();
@@ -226,7 +278,7 @@ export default function Home() {
   return <main>
     <header className="topbar">
       <div className="brand"><span>ϟ</span><div><strong>FOMO</strong><small>EXACT WALLET RADAR · SQLITE</small></div></div>
-      <nav aria-label="主导航">{views.map(([id, label]) => <button key={id} type="button" className={view === id ? "active" : ""} onClick={() => { setView(id); setVisibleLimit(40); }}>{label}</button>)}</nav>
+      <nav aria-label="主导航">{views.map(([id, label]) => <button key={id} type="button" className={view === id ? "active" : ""} aria-current={view === id ? "page" : undefined} onClick={() => { setView(id); setVisibleLimit(40); }}>{label}</button>)}</nav>
       <div className="top-actions"><button type="button" onClick={() => setCapabilitiesOpen(true)}>功能说明</button><button type="button" onClick={enableBrowserPush}>开启通知</button><button type="button" className="primary-action" onClick={() => setManageOpen(true)}>＋ 添加监控</button></div>
     </header>
 
@@ -247,7 +299,7 @@ export default function Home() {
     </section>
 
     {!["audit", "people", "health"].includes(view) && <div className="filterbar">
-      <div>{chains.map(([id, label]) => <button type="button" key={id || "all"} className={chain === id ? "active" : ""} onClick={() => { setChain(id); setVisibleLimit(40); }}>{label}</button>)}</div>
+      <div>{chains.map(([id, label]) => <button type="button" key={id || "all"} className={chain === id ? "active" : ""} aria-pressed={chain === id} onClick={() => { setChain(id); setVisibleLimit(40); }}>{label}</button>)}</div>
       <small>精确轮询 {status.config?.gmgnPollIntervalMs || 5000}ms · 金额为 GMGN 确认十进制值</small>
     </div>}
 
@@ -271,7 +323,7 @@ export default function Home() {
       {!filtered.length && <div className="feed-empty"><span>◎</span><strong>{view === "live" ? "暂时没有新的确认成交" : "当前筛选范围没有记录"}</strong><p>{collectorsDisabled && view === "live" ? "这是影子验收环境的预期结果。请到历史页查看真实金额、方向和交易详情。" : "系统不会用模拟数据填充；请查看运行状态确认来源是否健康。"}</p><div><button type="button" onClick={() => setView("history")}>查看历史成交</button><button type="button" onClick={() => setView("health")}>检查运行状态</button></div></div>}
     </section>}
 
-    {view === "audit" && <section className="audit-view"><div className="view-title"><div><span>SET RECONCILIATION</span><h1>漏单与字段一致性审计</h1></div><button type="button" disabled={busy === "audit"} onClick={runAudit}>{busy === "audit" ? "提交中…" : "立即对账"}</button></div>
+    {view === "audit" && <section className="audit-view"><div className="view-title"><div><span>SET RECONCILIATION</span><h1>漏单与字段一致性审计</h1></div><button type="button" disabled={isBusy("audit")} onClick={runAudit}>{isBusy("audit") ? "提交中…" : "立即对账"}</button></div>
       <div className="audit-summary"><article><span>审计窗口</span><strong>{reconciliations.length}</strong></article><article><span>Closed</span><strong>{reconciliations.filter((item) => item.status === "closed").length}</strong></article><article className={missingCount ? "bad" : "good"}><span>Closed 缺失</span><strong>{missingCount}</strong></article><article><span>字段不一致</span><strong>{reconciliations.reduce((sum, item) => sum + item.mismatched, 0)}</strong></article></div>
       <div className="audit-table">{reconciliations.map((item) => <article key={item.id}><div><strong>{people.find((person) => person.id === item.personId)?.name || short(item.wallet)}</strong><small>{short(item.wallet, 10, 6)}</small></div><span>{chainNames[item.chain] || item.chain}</span><span className={`state-pill ${item.status}`}>{item.status}</span><span>来源 {item.sourceCount}</span><span>本地 {item.localCount}</span><b className={item.missing || item.mismatched ? "bad" : item.status === "closed" ? "good" : "warn"}>{item.status !== "closed" ? "不可判零漏单" : `缺 ${item.missing} · 差 ${item.mismatched}`}</b><time>{ago(item.checkedAt)}</time></article>)}</div>
       {!reconciliations.length && <div className="panel-empty"><strong>还没有可核验的审计窗口</strong><p>点击“立即对账”后，系统会按钱包、链和固定时间窗口比较 GMGN 来源与本地稳定交易集合。只有来源分页完整且宽限期结束，窗口才会标记 Closed 并判定是否漏单。</p></div>}
@@ -279,29 +331,29 @@ export default function Home() {
 
     {view === "people" && <section className="follow-view"><div className="view-title"><div><span>MULTI-WALLET SUBSCRIPTIONS</span><h1>监控对象与钱包绑定</h1></div><button type="button" onClick={() => setManageOpen(true)}>+ 导入 KOL</button></div>
       <div className="follow-grid">{people.map((person) => <article key={person.id} className={person.monitorState !== "active" ? "paused" : ""}><div className="follow-card-head"><span className="avatar">{person.name.slice(0, 1).toUpperCase()}</span><div><a href={`https://x.com/${person.twitter || person.handle}`} target="_blank" rel="noopener noreferrer">{person.name}</a><small className={`state-${person.monitorState}`}>{person.monitorState} · {person.resolutionState} · {person.runtimeHealth}</small></div></div>
-        <div className="binding-list">{person.bindings.map((binding) => <div key={binding.id}><span>{chainNames[binding.chain] || binding.chain}</span><code title={binding.address}>{short(binding.address, 9, 7)}</code><small><b className={`role-badge ${monitorableRoles.has(binding.addressRole) ? "monitorable" : "evidence"}`}>{roleNames[binding.addressRole] || binding.addressRole}</b> · 第 {binding.generation || 1} 代 · {binding.verificationState} · {binding.desiredState}</small><small className="validity">有效期 {binding.validFrom ? new Date(binding.validFrom).toLocaleDateString() : "—"} → {binding.validTo ? new Date(binding.validTo).toLocaleDateString() : "持续"} · 最近发现 {ago(binding.lastSeenAt)}</small><div>{binding.verificationState === "pending" && <><button type="button" aria-label={`核验 ${person.name} 的 ${chainNames[binding.chain] || binding.chain} 钱包`} disabled={busy === binding.id} onClick={() => bindingAction(person.id, binding, "verify")}>核验</button><button type="button" aria-label={`拒绝 ${person.name} 的 ${chainNames[binding.chain] || binding.chain} 钱包`} disabled={busy === binding.id} onClick={() => bindingAction(person.id, binding, "reject")}>拒绝</button></>}<button type="button" aria-label={`${binding.desiredState === "enabled" ? "停用" : "启用"} ${person.name} 的 ${chainNames[binding.chain] || binding.chain} 钱包`} disabled={busy === binding.id} onClick={() => bindingAction(person.id, binding, "toggle")}>{binding.desiredState === "enabled" ? "停用" : "启用"}</button></div></div>)}</div>
-        {person.addressCandidates?.length > 0 && <div className="candidate-section"><div className="candidate-title"><strong>待核验地址</strong><span>{person.addressCandidates.filter((item) => item.verificationState === "pending").length} pending</span></div>{person.addressCandidates.map((candidate) => { const canPromote = candidate.verificationState === "pending" && Boolean(chainNames[candidate.chain]) && monitorableRoles.has(candidate.addressRole); return <article className={`candidate-card ${candidate.verificationState}`} key={candidate.id}><div><span>{chainNames[candidate.chain] || "链待确认"}</span><b>{roleNames[candidate.addressRole] || candidate.addressRole}</b><em>{confidence(candidate.confidence)}</em></div><code title={candidate.address}>{short(candidate.address, 10, 8)}</code><small>{candidate.source} · {candidate.evidence?.length || 0} 条证据 · 最近发现 {ago(candidate.lastSeenAt)}</small>{candidate.verificationState === "pending" && <div className="candidate-actions">{canPromote ? <button type="button" aria-label={`核验 ${person.name} 的候选地址 ${short(candidate.address)}`} disabled={busy === candidate.id} onClick={() => candidateAction(person.id, candidate, "verify")}>核验并监听</button> : <button type="button" onClick={() => { setBindingForm({ personId: person.id, chain: candidate.chain === "unknown" ? "bsc" : candidate.chain, address: candidate.address, addressType: "UNKNOWN", addressRole: candidate.addressRole === "unknown" ? "vault" : candidate.addressRole }); setMode("binding"); setManageOpen(true); }}>补充链与角色</button>}<button type="button" aria-label={`拒绝 ${person.name} 的候选地址 ${short(candidate.address)}`} disabled={busy === candidate.id} onClick={() => candidateAction(person.id, candidate, "reject")}>拒绝</button></div>}</article>; })}</div>}
+        <div className="binding-list">{person.bindings.map((binding) => <div key={binding.id}><span>{chainNames[binding.chain] || binding.chain}</span><code title={binding.address}>{short(binding.address, 9, 7)}</code><small><b className={`role-badge ${monitorableRoles.has(binding.addressRole) ? "monitorable" : "evidence"}`}>{roleNames[binding.addressRole] || binding.addressRole}</b> · 第 {binding.generation || 1} 代 · {binding.verificationState} · {binding.desiredState}</small><small className="validity">有效期 {binding.validFrom ? new Date(binding.validFrom).toLocaleDateString() : "—"} → {binding.validTo ? new Date(binding.validTo).toLocaleDateString() : "持续"} · 最近发现 {ago(binding.lastSeenAt)}</small><div>{binding.verificationState === "pending" && <><button type="button" aria-label={`核验 ${person.name} 的 ${chainNames[binding.chain] || binding.chain} 钱包`} disabled={isBusy(binding.id)} onClick={() => bindingAction(person.id, binding, "verify")}>核验</button><button type="button" aria-label={`拒绝 ${person.name} 的 ${chainNames[binding.chain] || binding.chain} 钱包`} disabled={isBusy(binding.id)} onClick={() => bindingAction(person.id, binding, "reject")}>拒绝</button></>}<button type="button" aria-label={`${binding.desiredState === "enabled" ? "停用" : "启用"} ${person.name} 的 ${chainNames[binding.chain] || binding.chain} 钱包`} disabled={isBusy(binding.id)} onClick={() => bindingAction(person.id, binding, "toggle")}>{binding.desiredState === "enabled" ? "停用" : "启用"}</button></div></div>)}</div>
+        {person.addressCandidates?.length > 0 && <div className="candidate-section"><div className="candidate-title"><strong>待核验地址</strong><span>{person.addressCandidates.filter((item) => item.verificationState === "pending").length} pending</span></div>{person.addressCandidates.map((candidate) => { const canPromote = candidate.verificationState === "pending" && Boolean(chainNames[candidate.chain]) && monitorableRoles.has(candidate.addressRole); return <article className={`candidate-card ${candidate.verificationState}`} key={candidate.id}><div><span>{chainNames[candidate.chain] || "链待确认"}</span><b>{roleNames[candidate.addressRole] || candidate.addressRole}</b><em>{confidence(candidate.confidence)}</em></div><code title={candidate.address}>{short(candidate.address, 10, 8)}</code><small>{candidate.source} · {candidate.evidence?.length || 0} 条证据 · 最近发现 {ago(candidate.lastSeenAt)}</small>{candidate.verificationState === "pending" && <div className="candidate-actions">{canPromote ? <button type="button" aria-label={`核验 ${person.name} 的候选地址 ${short(candidate.address)}`} disabled={isBusy(candidate.id)} onClick={() => candidateAction(person.id, candidate, "verify")}>核验并监听</button> : <button type="button" onClick={() => { setBindingForm({ personId: person.id, chain: candidate.chain === "unknown" ? "bsc" : candidate.chain, address: candidate.address, addressType: "UNKNOWN", addressRole: candidate.addressRole === "unknown" ? "vault" : candidate.addressRole }); setMode("binding"); setManageOpen(true); }}>补充链与角色</button>}<button type="button" aria-label={`拒绝 ${person.name} 的候选地址 ${short(candidate.address)}`} disabled={isBusy(candidate.id)} onClick={() => candidateAction(person.id, candidate, "reject")}>拒绝</button></div>}</article>; })}</div>}
         {!person.bindings.length && !person.addressCandidates?.length && <p className="unresolved-copy">没有已核验地址或候选证据，不会启动监听。</p>}
-        <div className="follow-actions"><button type="button" disabled={busy === person.id} onClick={() => personAction(person, person.enabled ? "pause" : "resume")}>{person.enabled ? "暂停" : "恢复"}</button><button type="button" disabled={busy === person.id} onClick={() => personAction(person, "resolve")}>发现地址</button><button type="button" disabled={busy === person.id || !person.bindings.some((item) => item.verificationState === "verified")} onClick={() => personAction(person, "backfill")}>历史回放</button><button type="button" className={confirmingRemove === person.id ? "confirm-remove" : ""} disabled={busy === person.id} onClick={() => removePerson(person)}>{confirmingRemove === person.id ? `确认移除 ${person.name}` : "移除"}</button></div>
+        <div className="follow-actions"><button type="button" disabled={isBusy(person.id)} onClick={() => personAction(person, person.enabled ? "pause" : "resume")}>{person.enabled ? "暂停" : "恢复"}</button><button type="button" disabled={isBusy(person.id)} onClick={() => personAction(person, "resolve")}>发现地址</button><button type="button" disabled={isBusy(person.id) || !person.bindings.some((item) => item.verificationState === "verified")} onClick={() => personAction(person, "backfill")}>历史回放</button><button type="button" className={confirmingRemove === person.id ? "confirm-remove" : ""} disabled={isBusy(person.id)} onClick={() => removePerson(person)}>{confirmingRemove === person.id ? `确认移除 ${person.name}` : "移除"}</button></div>
       </article>)}</div>
     </section>}
 
-    {view === "health" && <section className="health-view"><div className="view-title"><div><span>AUTHORITATIVE RUNTIME HEALTH</span><h1>运行状态与降级原因</h1></div><button type="button" disabled={busy === "refresh"} onClick={refreshStatus}>{busy === "refresh" ? "刷新中…" : "立即刷新"}</button></div>
+    {view === "health" && <section className="health-view"><div className="view-title"><div><span>AUTHORITATIVE RUNTIME HEALTH</span><h1>运行状态与降级原因</h1></div><button type="button" disabled={isBusy("refresh")} onClick={refreshStatus}>{isBusy("refresh") ? "刷新中…" : "立即刷新"}</button></div>
       <div className="health-summary"><article className={streamConnected ? "good" : "bad"}><span>SSE</span><strong>{streamConnected ? "在线" : "重连中"}</strong><small>持久事件游标 {status.asOfEventId || 0}</small></article><article className={status.integrity === "ok" ? "good" : "bad"}><span>SQLite</span><strong>{status.integrity || "unknown"}</strong><small>{status.storage || "—"}</small></article><article><span>服务就绪</span><strong>{status.readiness || "starting"}</strong><small>启动于 {status.startedAt ? new Date(status.startedAt).toLocaleString() : "—"}</small></article></div>
       <article className={`fomo-bridge-card ${sourceTone(status.fomoWeb?.source || { source: "fomo_web", state: status.fomoWeb?.configured ? "waiting" : "unconfigured" })}`}>
         <div className="bridge-intro"><div><span>SECONDARY EVIDENCE · OPTIONAL</span><h2>FOMO Web Bridge</h2><p>链上仍是最快和权威来源。FOMO 提醒只用于核对身份、发现 app-only 漏单证据，不会直接创建成交或通知。</p></div><strong>{status.fomoWeb?.source?.health || status.fomoWeb?.source?.state || (status.fomoWeb?.configured ? "waiting" : "unconfigured")}</strong></div>
         <div className="bridge-metrics"><span><small>24h 匹配</small><b>{status.fomoWeb?.summary?.matched ?? 0}</b></span><span><small>仅 FOMO</small><b>{status.fomoWeb?.summary?.appOnly ?? 0}</b></span><span><small>仅链上</small><b>{status.fomoWeb?.summary?.chainOnly ?? 0}</b></span><span><small>最近提醒</small><b>{ago(status.fomoWeb?.summary?.lastReceivedAt)}</b></span></div>
-        <div className="bridge-pairing"><div><label htmlFor="fomo-pair-secret">配对密钥（仅生成时显示）</label><input id="fomo-pair-secret" readOnly value={pairingSecret} placeholder={status.fomoWeb?.configured ? status.fomoWeb.secretMask || "已配置" : "尚未配对"} onFocus={(event) => event.currentTarget.select()} /><small>扩展目录：browser-extension/ · API：{API}</small></div><div className="bridge-actions"><button type="button" disabled={busy === "fomo-pair"} onClick={pairFomoWeb}>{busy === "fomo-pair" ? "生成中…" : status.fomoWeb?.configured ? "轮换配对密钥" : "生成配对密钥"}</button><button type="button" disabled={!pairingSecret} onClick={copyPairingSecret}>复制密钥</button><button type="button" className={confirmingFomoRevoke ? "confirm-remove" : ""} disabled={busy === "fomo-revoke" || !status.fomoWeb?.configured} onClick={revokeFomoWeb}>{busy === "fomo-revoke" ? "撤销中…" : confirmingFomoRevoke ? "确认撤销配对" : "撤销配对"}</button></div></div>
+        <div className="bridge-pairing"><div><label htmlFor="fomo-pair-secret">配对密钥（仅生成时显示）</label><input id="fomo-pair-secret" readOnly value={pairingSecret} placeholder={status.fomoWeb?.configured ? status.fomoWeb.secretMask || "已配置" : "尚未配对"} onFocus={(event) => event.currentTarget.select()} /><small>扩展目录：browser-extension/ · API：{API}</small></div><div className="bridge-actions"><button type="button" disabled={isBusy("fomo-pair")} onClick={pairFomoWeb}>{isBusy("fomo-pair") ? "生成中…" : status.fomoWeb?.configured ? "轮换配对密钥" : "生成配对密钥"}</button><button type="button" disabled={!pairingSecret} onClick={copyPairingSecret}>复制密钥</button><button type="button" className={confirmingFomoRevoke ? "confirm-remove" : ""} disabled={isBusy("fomo-revoke") || !status.fomoWeb?.configured} onClick={revokeFomoWeb}>{isBusy("fomo-revoke") ? "撤销中…" : confirmingFomoRevoke ? "确认撤销配对" : "撤销配对"}</button></div></div>
       </article>
       <div className="health-grid">{Object.entries(status.sourceDetails || {}).map(([key, item]) => <article key={key} className={sourceTone(item)}><div><strong>{key.replaceAll("_", " ").toUpperCase()}</strong><span>{item.health || item.state || "unknown"}</span></div><dl><div><dt>最近尝试</dt><dd>{ago(item.lastAttemptAt)}</dd></div><div><dt>最近成功</dt><dd>{ago(item.lastSuccessAt)}</dd></div><div><dt>目标命中</dt><dd>{ago(item.lastTargetEventAt)}</dd></div><div><dt>区块滞后</dt><dd>{item.blockLag ?? "—"}</dd></div><div><dt>有效轮询</dt><dd>{item.effectivePollIntervalMs ? `${item.effectivePollIntervalMs}ms` : "—"}</dd></div><div><dt>连续失败</dt><dd>{item.consecutiveFailures ?? 0}</dd></div></dl>{(item.errorCode || item.errorMessage || (sourceTone(item) === "bad" && item.reason)) && <p><strong>{item.errorCode || "DEGRADED"}</strong>{item.errorMessage || item.reason}</p>}</article>)}</div>
       {status.error && <div className="health-error"><strong>最近错误</strong><span>{status.error}</span></div>}
     </section>}
 
     {manageOpen && <aside className="manager" aria-label="监控对象管理"><div className="manager-head"><div><span>WATCHLIST</span><strong>监控对象管理</strong></div><button type="button" aria-label="关闭管理面板" onClick={() => setManageOpen(false)}>×</button></div>
-      <div className="manager-tabs"><button type="button" className={mode === "add" ? "active" : ""} onClick={() => setMode("add")}>新增</button><button type="button" className={mode === "import" ? "active" : ""} onClick={() => setMode("import")}>批量导入</button><button type="button" className={mode === "binding" ? "active" : ""} onClick={() => setMode("binding")}>添加钱包</button></div>
-      {mode === "add" && <form className="compact-form" onSubmit={addPerson}><label><span>FOMO HANDLE</span><input value={form.handle} onChange={(event) => setForm({ ...form, handle: event.target.value })} required /></label><label><span>TWITTER / X</span><input value={form.twitter} onChange={(event) => setForm({ ...form, twitter: event.target.value })} /></label><label><span>SOLANA 来源钱包（可留空）</span><input value={form.solanaAddress} onChange={(event) => setForm({ ...form, solanaAddress: event.target.value })} /></label><label><span>EVM 种子地址（可留空）</span><input value={form.evmAddress} onChange={(event) => setForm({ ...form, evmAddress: event.target.value })} /><small className="field-help">只作为地址发现线索，不会复制到 BNB、Base、Ethereum；确认真实链和执行角色后才监听。</small></label><label><span>备注</span><input value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label><button type="submit" className="submit" disabled={busy === "add"}>{busy === "add" ? "添加中…" : "添加 KOL"}</button></form>}
-      {mode === "import" && <div className="import-form"><p>先预览，再提交；大小写和前导 @ 不会创建重复人物。</p><textarea value={importText} onChange={(event) => { setImportText(event.target.value); setImportPreview(null); }} spellCheck={false} />{importPreview && <div className="import-preview"><strong>新增 {importPreview.summary.create || 0} · 更新 {importPreview.summary.update || 0} · 无效 {importPreview.summary.invalid || 0}</strong>{importPreview.items.slice(0, 8).map((item, index) => <small key={index}>{item.action} · {item.row.handle || item.reason}</small>)}</div>}<div className="split-actions"><button type="button" onClick={previewImport} disabled={busy === "preview"}>预览</button><button type="button" className="submit" onClick={commitImport} disabled={busy === "import" || !importPreview}>确认导入</button></div></div>}
-      {mode === "binding" && <form className="compact-form" onSubmit={addBinding}><label><span>KOL</span><select value={bindingForm.personId} onChange={(event) => setBindingForm({ ...bindingForm, personId: event.target.value })} required><option value="">选择对象</option>{people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select></label><label><span>链</span><select value={bindingForm.chain} onChange={(event) => setBindingForm({ ...bindingForm, chain: event.target.value })}>{chains.slice(1).map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label><label><span>钱包地址</span><input value={bindingForm.address} onChange={(event) => setBindingForm({ ...bindingForm, address: event.target.value })} required /></label><label><span>地址角色</span><select value={bindingForm.addressRole} onChange={(event) => setBindingForm({ ...bindingForm, addressRole: event.target.value })}>{addressRoles.map((item) => <option value={item} key={item}>{roleNames[item]}{monitorableRoles.has(item) ? " · 监听" : " · 仅证据"}</option>)}</select><small className="field-help">只有来源钱包、交易金库和智能账户会成为扫描目标。</small></label><label><span>账户类型</span><select value={bindingForm.addressType} onChange={(event) => setBindingForm({ ...bindingForm, addressType: event.target.value })}>{["UNKNOWN", "EOA", "ERC4337", "SAFE", "CONTRACT"].map((item) => <option key={item}>{item}</option>)}</select></label><button type="submit" className="submit" disabled={busy === "binding"}>{monitorableRoles.has(bindingForm.addressRole) ? "核验并开始监听" : "保存为证据地址"}</button></form>}
+      <div className="manager-tabs"><button type="button" className={mode === "add" ? "active" : ""} aria-pressed={mode === "add"} onClick={() => setMode("add")}>新增</button><button type="button" className={mode === "import" ? "active" : ""} aria-pressed={mode === "import"} onClick={() => setMode("import")}>批量导入</button><button type="button" className={mode === "binding" ? "active" : ""} aria-pressed={mode === "binding"} onClick={() => setMode("binding")}>添加钱包</button></div>
+      {mode === "add" && <form className="compact-form" onSubmit={addPerson}><label><span>FOMO HANDLE</span><input value={form.handle} onChange={(event) => setForm({ ...form, handle: event.target.value })} required /></label><label><span>TWITTER / X</span><input value={form.twitter} onChange={(event) => setForm({ ...form, twitter: event.target.value })} /></label><label><span>SOLANA 来源钱包（可留空）</span><input value={form.solanaAddress} onChange={(event) => setForm({ ...form, solanaAddress: event.target.value })} /></label><label><span>EVM 种子地址（可留空）</span><input value={form.evmAddress} onChange={(event) => setForm({ ...form, evmAddress: event.target.value })} /><small className="field-help">只作为地址发现线索，不会复制到 BNB、Base、Ethereum；确认真实链和执行角色后才监听。</small></label><label><span>备注</span><input value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label><button type="submit" className="submit" disabled={isBusy("add")}>{isBusy("add") ? "添加中…" : "添加 KOL"}</button></form>}
+      {mode === "import" && <div className="import-form"><p id="watchlist-import-help">先预览，再提交；大小写和前导 @ 不会创建重复人物。</p><label htmlFor="watchlist-import">批量导入 CSV</label><textarea id="watchlist-import" aria-describedby="watchlist-import-help" value={importText} onChange={(event) => { setImportText(event.target.value); setImportPreview(null); }} spellCheck={false} />{importPreview && <div className="import-preview"><strong>新增 {importPreview.summary.create || 0} · 更新 {importPreview.summary.update || 0} · 无效 {importPreview.summary.invalid || 0}</strong>{importPreview.items.slice(0, 8).map((item, index) => <small key={index}>{item.action} · {item.row.handle || item.reason}</small>)}</div>}<div className="split-actions"><button type="button" onClick={previewImport} disabled={isBusy("preview")}>预览</button><button type="button" className="submit" onClick={commitImport} disabled={isBusy("import") || !importPreview}>确认导入</button></div></div>}
+      {mode === "binding" && <form className="compact-form" onSubmit={addBinding}><label><span>KOL</span><select value={bindingForm.personId} onChange={(event) => setBindingForm({ ...bindingForm, personId: event.target.value })} required><option value="">选择对象</option>{people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select></label><label><span>链</span><select value={bindingForm.chain} onChange={(event) => setBindingForm({ ...bindingForm, chain: event.target.value })}>{chains.slice(1).map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label><label><span>钱包地址</span><input value={bindingForm.address} onChange={(event) => setBindingForm({ ...bindingForm, address: event.target.value })} required /></label><label><span>地址角色</span><select value={bindingForm.addressRole} onChange={(event) => setBindingForm({ ...bindingForm, addressRole: event.target.value })}>{addressRoles.map((item) => <option value={item} key={item}>{roleNames[item]}{monitorableRoles.has(item) ? " · 监听" : " · 仅证据"}</option>)}</select><small className="field-help">只有来源钱包、交易金库和智能账户会成为扫描目标。</small></label><label><span>账户类型</span><select value={bindingForm.addressType} onChange={(event) => setBindingForm({ ...bindingForm, addressType: event.target.value })}>{["UNKNOWN", "EOA", "ERC4337", "SAFE", "CONTRACT"].map((item) => <option key={item}>{item}</option>)}</select></label><button type="submit" className="submit" disabled={isBusy("binding")}>{monitorableRoles.has(bindingForm.addressRole) ? "核验并开始监听" : "保存为证据地址"}</button></form>}
       <footer className="manager-foot"><div><span>READ ONLY</span><p>只读监控，不接触私钥或签名</p></div><button type="button" onClick={enableBrowserPush}>开启通知</button></footer>
     </aside>}
 

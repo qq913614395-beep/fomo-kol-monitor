@@ -1,0 +1,10 @@
+{
+  "transactionIdentity": "0x90002cf161e23bf3c7dcce5415b1d8b84cbb39057ca3063fd4252babf0f10023",
+  "discoveryPath": "direct_tx_from",
+  "side": "buy",
+  "symbol": "JACKET",
+  "terminalToken": "0x57aedac0ccaafdec0ec62fc4fbfd8252735affff",
+  "routeOnlySymbols": ["NVDAB"],
+  "valueUsdExact": "1163.1332351698225",
+  "valueUsdDisplay": "1163.13"
+}

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FOMO KOL Monitor Bridge</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <p class="eyebrow">FOMO WEB · SECONDARY EVIDENCE</p>
+    <h1>连接本机监控器</h1>
+    <p class="intro">扩展只读取 FOMO 的交易提醒入站消息。不会读取登录令牌，不会直接生成成交或通知。远程服务器必须使用 HTTPS，并且只会申请你填写的那个域名权限。</p>
+    <label>本机 API 地址<input id="apiBase" type="url" spellcheck="false" value="http://127.0.0.1:8788"></label>
+    <label>配对密钥<input id="secret" type="password" spellcheck="false" autocomplete="off" placeholder="从监控器运行状态页复制"></label>
+    <div class="actions"><button id="save" type="button">保存配置</button><button id="test" type="button" class="secondary">测试连接</button></div>
+    <output id="result" aria-live="polite">尚未测试</output>
+    <dl><div><dt>离线队列</dt><dd id="queue">0</dd></div><div><dt>最近成功</dt><dd id="success">—</dd></div><div><dt>最近错误</dt><dd id="error">—</dd></div></dl>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>

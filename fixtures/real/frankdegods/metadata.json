@@ -1,0 +1,44 @@
+{
+  "sourceVersion": "1.5.6",
+  "chain": "multi",
+  "wallet": {
+    "sol": "498g1rVnFcnjBjpfw1xyqA1WvgQXUU8RWuELjxkjAayQ",
+    "evm": "0x696d1265c8fc4f14797abebfae3c43ebfa9d8e28"
+  },
+  "transactionIdentity": "portfolio-window",
+  "pagination": "Solana pages 1-3; other next cursors preserved in raw responses",
+  "capturedAt": "2026-08-04T06:55:48.207Z",
+  "authorization": "User authorized public read-only GMGN CLI and RPC fixture capture on 2026-08-04.",
+  "files": [
+    {
+      "file": "gmgn-sol-page-1.raw.json",
+      "sha256": "84d8e819f188ca7fb755ce5c92ffd0dbaf64941c924f1551d6f2476e3061469a",
+      "bytes": 21799
+    },
+    {
+      "file": "gmgn-bsc-page-1.raw.json",
+      "sha256": "0ada970fe525791a62a96dc23ccfa64569b988f4730fa11b2acf1d8fff46301e",
+      "bytes": 21829
+    },
+    {
+      "file": "gmgn-base-page-1.raw.json",
+      "sha256": "87dd3dd37fdecf08e1801424a392e5553b4013a6ecd1979d907a3b0e71aba605",
+      "bytes": 21891
+    },
+    {
+      "file": "gmgn-eth-page-1.raw.json",
+      "sha256": "35081261c778e6c756342e783f1ee638d352d4ca32046a1d9059b651f2279b23",
+      "bytes": 28
+    },
+    {
+      "file": "gmgn-sol-page-2.raw.json",
+      "sha256": "cdb3d81b20196c7c68715ee31fc343c98ea7d5faf521bd4ef1dbf4a7b3ee6a5e",
+      "bytes": 21722
+    },
+    {
+      "file": "gmgn-sol-page-3.raw.json",
+      "sha256": "62c0e8be4216991772f6e7c20fe575edd332b8edd60f67747e81a6a1e491a163",
+      "bytes": 22238
+    }
+  ]
+}

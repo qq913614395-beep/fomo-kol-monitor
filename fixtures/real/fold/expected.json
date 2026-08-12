@@ -1,0 +1,8 @@
+{
+  "gmgnTransactionIdentity": "0x32eb9f5e22dabf5ed06f1e0f61dc8f2b44bbb238b596aa827b105ad175108686",
+  "userOperationTransactionIdentity": "0xc63807e9208429113fad88641e1d2adf9822476417c19781f1a25474ef27afa9",
+  "userOperationHash": "0xd63d47eeeb74d91c943a8dce22f2920c714d4d6d6a6d3085b482a3656963fdc5",
+  "sender": "0x696d1265c8fc4f14797abebfae3c43ebfa9d8e28",
+  "discoveryPath": "erc4337_user_operation",
+  "gmgnToUserOperationLinkage": "blocked_unverified"
+}

@@ -1,0 +1,25 @@
+{
+  "sourceVersion": "1.5.6",
+  "chain": "bsc",
+  "wallet": "0x696d1265c8fc4f14797abebfae3c43ebfa9d8e28",
+  "transactionIdentity": "0x90002cf161e23bf3c7dcce5415b1d8b84cbb39057ca3063fd4252babf0f10023",
+  "capturedAt": "2026-08-04T06:55:48.195Z",
+  "authorization": "User authorized public read-only GMGN CLI and RPC fixture capture on 2026-08-04.",
+  "files": [
+    {
+      "file": "gmgn-activity.raw.json",
+      "sha256": "0ada970fe525791a62a96dc23ccfa64569b988f4730fa11b2acf1d8fff46301e",
+      "bytes": 21829
+    },
+    {
+      "file": "evm-transaction.raw.json",
+      "sha256": "4e5eb2ee32f4cf994626ae36e3762953d718a8003921c9badefaaf5974de23a3",
+      "bytes": 3355
+    },
+    {
+      "file": "evm-receipt.raw.json",
+      "sha256": "1ad28891f54cac47c66e8052d491701ec8a9b727a30a7e1d200720c71d98a860",
+      "bytes": 13686
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+[Unit]
+Description=FOMO KOL Monitor Web
+After=network-online.target fomo-monitor-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fomo-monitor
+Group=fomo-monitor
+WorkingDirectory=/opt/fomo-kol-monitor
+Environment=NODE_ENV=production
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node node_modules/vinext/dist/cli.js start --hostname 127.0.0.1 --port 3001
+Restart=on-failure
+RestartSec=4
+TimeoutStopSec=20
+KillSignal=SIGTERM
+UMask=0077
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

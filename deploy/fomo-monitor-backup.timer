@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily FOMO KOL Monitor backup
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+Persistent=true
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

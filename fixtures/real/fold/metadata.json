@@ -1,0 +1,38 @@
+{
+  "sourceVersion": "1.5.6",
+  "chain": "base",
+  "wallet": "0x696d1265c8fc4f14797abebfae3c43ebfa9d8e28",
+  "transactionIdentity": "0x32eb9f5e22dabf5ed06f1e0f61dc8f2b44bbb238b596aa827b105ad175108686",
+  "userOperationTransaction": "0xc63807e9208429113fad88641e1d2adf9822476417c19781f1a25474ef27afa9",
+  "userOperationHash": "0xd63d47eeeb74d91c943a8dce22f2920c714d4d6d6a6d3085b482a3656963fdc5",
+  "linkageStatus": "unverified",
+  "capturedAt": "2026-08-04T06:55:48.201Z",
+  "authorization": "User authorized public read-only GMGN CLI and RPC fixture capture on 2026-08-04.",
+  "files": [
+    {
+      "file": "gmgn-activity.raw.json",
+      "sha256": "87dd3dd37fdecf08e1801424a392e5553b4013a6ecd1979d907a3b0e71aba605",
+      "bytes": 21891
+    },
+    {
+      "file": "gmgn-transaction.raw.json",
+      "sha256": "3e7ba5a94cfddbec14a9a4e21256c3f6cf0345bcda5e3b55b053dac05f83e8ca",
+      "bytes": 11435
+    },
+    {
+      "file": "gmgn-receipt.raw.json",
+      "sha256": "6d7703b093f5da7634fd62435a8362447d2516e310809a6497a3db09586703b8",
+      "bytes": 25091
+    },
+    {
+      "file": "userop-transaction.raw.json",
+      "sha256": "532309ae43aeffb188df8d7d1aa3a6b86e8c1ba362f5f5cb04e56e5dd2b4fb53",
+      "bytes": 3370
+    },
+    {
+      "file": "userop-receipt.raw.json",
+      "sha256": "ed6f925932f8d7f06d65d9c81bbd6abcf9dbb272cc339d77f8ea5058aeffce72",
+      "bytes": 4530
+    }
+  ]
+}

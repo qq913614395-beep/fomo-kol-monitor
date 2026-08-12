@@ -1,0 +1,28 @@
+[Unit]
+Description=FOMO KOL Monitor API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fomo-monitor
+Group=fomo-monitor
+WorkingDirectory=/opt/fomo-kol-monitor
+EnvironmentFile=/etc/fomo-kol-monitor/api.env
+Environment=NODE_ENV=production
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node monitor/server.mjs
+Restart=on-failure
+RestartSec=4
+TimeoutStopSec=20
+KillSignal=SIGTERM
+UMask=0077
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/fomo-kol-monitor
+
+[Install]
+WantedBy=multi-user.target

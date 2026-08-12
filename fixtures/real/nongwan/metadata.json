@@ -1,0 +1,30 @@
+{
+  "sourceVersion": "1.5.6",
+  "chain": "solana",
+  "wallet": "498g1rVnFcnjBjpfw1xyqA1WvgQXUU8RWuELjxkjAayQ",
+  "transactionIdentity": "2gEh2GPZrhx4VjVe5DwvectM1jZr9UtBCg3BTqCWp3SDPuzPnpbPAA9mph9y58b47TpuPZzXhDwhgVczY5uhmt34",
+  "capturedAt": "2026-08-04T06:55:48.189Z",
+  "authorization": "User authorized public read-only GMGN CLI and RPC fixture capture on 2026-08-04.",
+  "files": [
+    {
+      "file": "gmgn-page-1.raw.json",
+      "sha256": "84d8e819f188ca7fb755ce5c92ffd0dbaf64941c924f1551d6f2476e3061469a",
+      "bytes": 21799
+    },
+    {
+      "file": "gmgn-page-2.raw.json",
+      "sha256": "cdb3d81b20196c7c68715ee31fc343c98ea7d5faf521bd4ef1dbf4a7b3ee6a5e",
+      "bytes": 21722
+    },
+    {
+      "file": "gmgn-page-3.raw.json",
+      "sha256": "62c0e8be4216991772f6e7c20fe575edd332b8edd60f67747e81a6a1e491a163",
+      "bytes": 22238
+    },
+    {
+      "file": "solana-getTransaction.raw.json",
+      "sha256": "74e6ec3bc97b69d9c4f44d05cc1134004f9f714818d24f3690e79b962c525ade",
+      "bytes": 45124
+    }
+  ]
+}

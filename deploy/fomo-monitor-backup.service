@@ -1,0 +1,17 @@
+[Unit]
+Description=Backup FOMO KOL Monitor SQLite
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=DATA_DIR=/var/lib/fomo-kol-monitor
+Environment=BACKUP_ROOT=/var/backups/fomo-kol-monitor
+ExecStart=/opt/fomo-kol-monitor/deploy/backup.sh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/fomo-kol-monitor
+ReadOnlyPaths=/var/lib/fomo-kol-monitor

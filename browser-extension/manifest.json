@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "FOMO KOL Monitor Bridge",
+  "version": "0.1.0",
+  "description": "将 FOMO Web 的交易提醒安全转发到本机 KOL 监控器，仅用于二次核对。",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "optional_host_permissions": ["https://*/*"],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://fomo.family/*", "https://*.fomo.family/*"],
+      "js": ["capture-main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://fomo.family/*", "https://*.fomo.family/*"],
+      "js": ["bridge-content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "options_page": "options.html",
+  "action": {
+    "default_title": "配置 FOMO KOL Monitor Bridge"
+  }
+}

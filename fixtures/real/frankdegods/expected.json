@@ -1,0 +1,8 @@
+{
+  "wallets": {
+    "solana": "498g1rVnFcnjBjpfw1xyqA1WvgQXUU8RWuELjxkjAayQ",
+    "evm": "0x696d1265c8fc4f14797abebfae3c43ebfa9d8e28"
+  },
+  "chains": ["sol", "bsc", "base", "eth"],
+  "requirements": ["exact-wallet", "pagination-preserved", "direction", "asset-address", "exact-amount", "deduplicated"]
+}

@@ -13,6 +13,24 @@ function mask(value = "") {
   return `${text.slice(0, 4)}***${text.slice(-4)}`;
 }
 
+export function validateWebhookUrl(value) {
+  let url;
+  try { url = new URL(String(value || "")); }
+  catch { throw Object.assign(new Error("A valid HTTPS webhook URL is required"), { code: "INVALID_CHANNEL" }); }
+  const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)?.slice(1).map(Number);
+  const privateV4 = ipv4 && ipv4.every((part) => part >= 0 && part <= 255) && (
+    ipv4[0] === 10 || ipv4[0] === 127 || ipv4[0] === 0 ||
+    (ipv4[0] === 169 && ipv4[1] === 254) || (ipv4[0] === 192 && ipv4[1] === 168) ||
+    (ipv4[0] === 172 && ipv4[1] >= 16 && ipv4[1] <= 31)
+  );
+  const localHost = host === "localhost" || host.endsWith(".localhost") || host === "::1" || host.startsWith("fe80:") || host.startsWith("fc") || host.startsWith("fd");
+  if (url.protocol !== "https:" || privateV4 || localHost || url.username || url.password) {
+    throw Object.assign(new Error("Webhook must use HTTPS and cannot target local, private, or link-local addresses"), { code: "INVALID_CHANNEL" });
+  }
+  return url.toString();
+}
+
 async function dpapi(script, input) {
   if (process.platform !== "win32") throw Object.assign(new Error("Windows DPAPI is required for persistent notification secrets"), { code: "DPAPI_UNAVAILABLE" });
   const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
@@ -83,7 +101,7 @@ export class NotificationSecretStore {
       ? { botToken: String(value.botToken || ""), chatId: String(value.chatId || ""), enabled: value.enabled !== false }
       : { url: String(value.url || ""), enabled: value.enabled !== false };
     if (id === "telegram" && (!payload.botToken || !payload.chatId)) throw Object.assign(new Error("Telegram botToken and chatId are required"), { code: "INVALID_CHANNEL" });
-    if (id === "webhook") { try { const url = new URL(payload.url); if (!/^https?:$/.test(url.protocol)) throw new Error(); } catch { throw Object.assign(new Error("A valid HTTP(S) webhook URL is required"), { code: "INVALID_CHANNEL" }); } }
+    if (id === "webhook") payload.url = validateWebhookUrl(payload.url);
     this.records[id] = { encrypted: await protectSecret(JSON.stringify(payload)), enabled: payload.enabled, mask: id === "telegram" ? `${mask(payload.botToken)} / ${mask(payload.chatId)}` : mask(payload.url), updatedAt: new Date().toISOString() };
     await this.save();
     return this.list().find((item) => item.id === id);

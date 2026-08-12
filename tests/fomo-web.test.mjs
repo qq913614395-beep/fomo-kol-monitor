@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createBridgeSignature, normalizeFomoAlert, verifyBridgeSignature } from "../monitor/fomo-web.mjs";
-import { protectSecret, unprotectSecret } from "../monitor/secrets.mjs";
+import { protectSecret, unprotectSecret, validateWebhookUrl } from "../monitor/secrets.mjs";
 import { Store } from "../monitor/store.mjs";
 
 const SOL = "498g1rVnFcnjBjpfw1xyqA1WvgQXUU8RWuELjxkjAayQ";
@@ -41,6 +41,13 @@ test("portable server secrets use authenticated AES-256-GCM", async () => {
     await assert.rejects(() => unprotectSecret(`${encrypted.slice(0, -1)}${replacement}`));
   } finally {
     if (previous == null) delete process.env.MONITOR_MASTER_KEY; else process.env.MONITOR_MASTER_KEY = previous;
+  }
+});
+
+test("webhooks require public HTTPS destinations", () => {
+  assert.equal(validateWebhookUrl("https://hooks.example.com/fomo"), "https://hooks.example.com/fomo");
+  for (const value of ["http://hooks.example.com/x", "https://localhost/x", "https://127.0.0.1/x", "https://10.0.0.1/x", "https://169.254.169.254/latest", "https://[::1]/x"]) {
+    assert.throws(() => validateWebhookUrl(value), /HTTPS|local|private/i);
   }
 });
 

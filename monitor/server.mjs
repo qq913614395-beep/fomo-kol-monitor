@@ -621,7 +621,7 @@ const server = http.createServer(async (request, response) => {
       if (!originAllowed(request)) return errorResponse(request, response, 403, "ORIGIN_REJECTED", "Origin is not allowed", request.requestId);
       response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive", ...(request.headers.origin ? { "access-control-allow-origin": request.headers.origin } : {}) });
       const requested = Number(request.headers["last-event-id"] || url.searchParams.get("after") || 0); const bounds = database.eventBounds();
-      if (requested && requested < Number(bounds.min) - 1) sendEnvelope(response, { id: randomUUID(), sequence: Number(bounds.max), type: "reset.required", payloadVersion: "1.0", occurredAt: stamp(), entityId: null, data: { reason: "cursor_expired", asOfEventId: bounds.max } });
+      if (requested && (requested < Number(bounds.min) - 1 || Number(bounds.max) - requested > 1000)) sendEnvelope(response, { id: randomUUID(), sequence: Number(bounds.max), type: "reset.required", payloadVersion: "1.0", occurredAt: stamp(), entityId: null, data: { reason: requested < Number(bounds.min) - 1 ? "cursor_expired" : "cursor_too_far_behind", asOfEventId: bounds.max } });
       else for (const envelope of database.eventsAfter(requested, 1000)) sendEnvelope(response, envelope);
       response.write(`event: ready\ndata: ${JSON.stringify({ type: "ready", asOfEventId: bounds.max })}\n\n`);
       sseClients.add(response); request.on("close", () => sseClients.delete(response)); return;
